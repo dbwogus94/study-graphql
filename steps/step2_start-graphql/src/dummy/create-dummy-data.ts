@@ -1,3 +1,6 @@
+import * as fs from 'fs/promises';
+import * as path from 'path';
+
 export type Skill = 'express' | 'nestjs' | 'react' | 'nextjs';
 export interface User {
   id: number;
@@ -35,4 +38,12 @@ const teams: Team[] = Array.from({ length: teamCount }, (_, idx) => ({
   users: useTeamUsers.splice(0, teamInUserCount),
 }));
 
-export { users, teams };
+fs.writeFile(
+  path.join(__dirname, './dummy-teams.json'),
+  JSON.stringify(teams),
+).then(() => console.log('success create dummy-teams.json'));
+
+fs.writeFile(
+  path.join(__dirname, './dummy-users.json'),
+  JSON.stringify(users),
+).then(() => console.log('success create dummy-users.json'));

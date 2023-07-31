@@ -1,5 +1,6 @@
 import { buildSchema, graphql, GraphQLArgs } from 'graphql';
-import { Skill, teams, users } from '../dummy-data';
+import { teams, users } from './dummy';
+import { Skill } from './dummy/create-dummy-data';
 
 type MutationArgs = Pick<GraphQLArgs, 'source' | 'variableValues'>;
 
@@ -10,18 +11,18 @@ type MutationArgs = Pick<GraphQLArgs, 'source' | 'variableValues'>;
 const schema = buildSchema(`\
 	## 인터페이스 지정
 	interface Base {
-		id: ID!
+		id: Int! # Note: ID를 사용하면 응답 결과가 문자열로 조회된다.
     name: String!
 	}
 
 	## (필수) Query(조회)용 스키마 지정 
   type Team implements Base {
-		id: ID!
+		id: Int!
     name: String!
     users: [User!]!
   }
   type User implements Base {
-    id: ID!
+    id: Int!
     name: String!
     age: Int!
     skill: String!
@@ -32,6 +33,13 @@ const schema = buildSchema(`\
 		react
 		nextjs
 	}
+
+  type AppendTeamResponse {
+    id: Int!
+  }
+  type AppendUserResponse {
+    id: Int!
+  }
 
 	## 뮤테이션(CUD)용 스키마 지정
 	input TeamInput {
@@ -54,8 +62,8 @@ const schema = buildSchema(`\
 
 	## 뮤테이션 선언
 	type Mutation {
-		appendTeam(input: TeamInput!): Int!
-		appendUser(input: UserInput!): Int!
+		appendTeam(input: TeamInput!): AppendTeamResponse!
+		appendUser(input: UserInput!): AppendUserResponse!
 	}
 `);
 
@@ -63,7 +71,7 @@ const schema = buildSchema(`\
  * Resolver 정의
  * - Query에 대응하는 핸들러(리졸버)
  */
-const rootValue = {
+export const rootValue = {
   getTeams: () => {
     return teams;
   },
@@ -74,7 +82,7 @@ const rootValue = {
     const beforeLength = teams.length;
     const newTeam = { id: beforeLength + 1, ...agrs.input, users: [] };
     teams.push(newTeam);
-    return beforeLength !== teams.length ? newTeam.id : -1;
+    return beforeLength !== teams.length ? { id: newTeam.id } : { id: -1 };
   },
 
   getUsers: () => {
@@ -91,40 +99,39 @@ const rootValue = {
       teamId: number;
     };
   }) => {
-    const { teamId } = agrs.input;
+    const { teamId, ...other } = agrs.input;
     const team = teams.find((t) => t.id === Number(teamId));
     if (!team) {
       throw new Error(`[404] ${teamId}에 해당하는 Team이 존재하지 않습니다.`);
     }
 
     const beforeLength = users.length;
-    const newUser = { id: beforeLength + 1, ...agrs.input };
-    users.push(newUser);
-    team.users.push(newUser);
-    return beforeLength !== teams.length ? newUser.id : -1;
+    const newUser = { id: beforeLength + 1, ...other };
+    users.push(newUser) && team.users.push(newUser);
+    return beforeLength !== users.length ? { id: newUser.id } : { id: -1 };
   },
 };
 
 /**
  * 조회용 질의문
  */
-const QueryGql = {
-  getTeams: () => '{ getTeams { id, name, users { id, name } }  }',
+export const QueryGql = {
+  getTeams: () => '{ getTeams { id, name, users { id, name, age, skill } }  }',
   getTeam: (teamId: number) =>
     `{ getTeam(id: ${teamId}) { id, name, users { id, name, age, skill } } }`,
   getUsers: () => '{ getUsers { id, name, age, skill } }',
   getUser: (userId: number) =>
-    `{ getTeam(id: ${userId}) { id, name, age, skill } }`,
+    `{ getUser(id: ${userId}) { id, name, age, skill } }`,
 };
 
 /**
- * 생성용 질의문
+ * 뮤테이션에 사용할 질의
  */
-const Mutation = {
+export const Mutation = {
   appendTeam: (input: { name: string }): MutationArgs => ({
     // Note: 파라미터에 동적 매핑하여 요청하려면 아래와 같이 mutation으로 감싼다
     source: `mutation appendTeamMutation($input: TeamInput!) {
-      appendTeam(input: $input) 
+      appendTeam(input: $input) { id }
     }`,
     variableValues: {
       input,
@@ -137,7 +144,7 @@ const Mutation = {
     teamId: number;
   }): MutationArgs => ({
     source: `mutation appendUserMutation($input: UserInput!) {
-      appendUser(input: $input) 
+      appendUser(input: $input) { id }
     }`,
     variableValues: {
       input,
@@ -145,7 +152,7 @@ const Mutation = {
   }),
 };
 
-async function callGraphql(args: MutationArgs): Promise<any> {
+export async function callGraphql(args: MutationArgs): Promise<any> {
   const result = await graphql({ schema, rootValue, ...args });
   if (result.errors) {
     console.error(result.errors);
@@ -153,37 +160,3 @@ async function callGraphql(args: MutationArgs): Promise<any> {
   }
   return result.data;
 }
-
-/**
- * 테스트 코드
- * @returns
- */
-async function creatUser() {
-  // 1) 팀 생성
-  const appendTeamMutation = Mutation.appendTeam({ name: 'new Team' });
-  const resultAppendTeam = await callGraphql(appendTeamMutation);
-  const newTeamId = resultAppendTeam.appendTeam;
-  if (!newTeamId) {
-    throw new Error('[500] 팀 생성 실패');
-  }
-  // 2) 신규 유저 생성
-  const appendUserMutation = Mutation.appendUser({
-    name: 'new User',
-    age: 21,
-    skill: 'express',
-    teamId: newTeamId,
-  });
-  const resultAppendUser = await callGraphql(appendUserMutation);
-  const newUserId = resultAppendUser.appendUser;
-
-  if (!newUserId) {
-    throw new Error('[500] 유저 생성 실패');
-  }
-
-  // 3) 신규 생성된 팀과 신규 생성된 유저 조회
-  return callGraphql({
-    source: QueryGql.getTeam(newTeamId),
-  });
-}
-
-creatUser().then((res) => console.dir(res, { depth: 3 }));
